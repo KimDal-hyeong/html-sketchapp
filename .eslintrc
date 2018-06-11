@@ -41,6 +41,12 @@
     "NSModalResponseOK": false,
     "NSString": false,
     "NSUTF8StringEncoding": false,
-    "NSAlert": false
+    "NSAlert": false,
+    "NSMutableAttributedString": false,
+    "MSSVGImporter": false,
+    "COSAlertWindow": false,
+    "NSMakeRect": false,
+    "NSBundle": false,
+    "MSSharedStyle": false
   }
 }

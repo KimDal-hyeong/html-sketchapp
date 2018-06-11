@@ -1,6 +1,9 @@
+import UI from 'sketch/ui';
 import {fromSJSONDictionary} from 'sketchapp-json-plugin';
 import {fixTextLayer, fixSharedTextStyle} from './helpers/fixFont';
 import fixImageFill from './helpers/fixImageFill';
+import fixSVGLayer from './helpers/fixSVG';
+import zoomToFit from './helpers/zoomToFit';
 
 function removeExistingLayers(context) {
   if (context.containsLayers()) {
@@ -16,16 +19,43 @@ function removeExistingLayers(context) {
   }
 }
 
-function fixLayer(layer) {
-  if (layer['_class'] === 'text') {
+function getNativeLayer(failingLayers, layer) {
+  if (layer._class === 'text') {
     fixTextLayer(layer);
+  } else if (layer._class === 'svg') {
+    fixSVGLayer(layer);
   } else {
     fixImageFill(layer);
   }
 
-  if (layer.layers) {
-    layer.layers.forEach(fixLayer);
+  // Create native object for the current layer, ignore the children for now
+  // this alows us to catch and ignore failing layers and finish the import
+  const children = layer.layers;
+  let nativeObj = null;
+
+  layer.layers = [];
+
+  try {
+    nativeObj = fromSJSONDictionary(layer);
+  } catch (e) {
+    failingLayers.push(layer.name);
+
+    console.log('Layer failed to import: ' + layer.name);
+    return null;
   }
+
+  // Get native object for all child layers and append them to the current object
+  if (children && children.length) {
+    children.forEach(child => {
+      const nativeChild = getNativeLayer(failingLayers, child);
+
+      if (nativeChild) {
+        nativeObj.addLayer(nativeChild);
+      }
+    });
+  }
+
+  return nativeObj;
 }
 
 function removeSharedTextStyles(document) {
@@ -33,9 +63,16 @@ function removeSharedTextStyles(document) {
 }
 
 function addSharedTextStyle(document, style) {
-  const textStyles = document.documentData().layerTextStyles();
+  const container = context.document.documentData().layerTextStyles();
 
-  textStyles.addSharedStyleWithName_firstInstance(style.name, fromSJSONDictionary(style.value));
+  if (container.addSharedStyleWithName_firstInstance) {
+    container.addSharedStyleWithName_firstInstance(style.name, fromSJSONDictionary(style.value));
+  } else {
+    // addSharedStyleWithName_firstInstance was removed in Sketch 50
+    const s = MSSharedStyle.alloc().initWithName_firstInstance(style.name, fromSJSONDictionary(style.value));
+
+    container.addSharedObject(s);
+  }
 }
 
 function removeSharedColors(document) {
@@ -120,11 +157,22 @@ export default function asketch2sketch(context) {
 
     page.name = asketchPage.name;
 
-    asketchPage.layers.forEach(layer => {
-      fixLayer(layer);
-      page.addLayer(fromSJSONDictionary(layer));
-    });
+    const failingLayers = [];
 
-    console.log('Layers added: ' + asketchPage.layers.length);
+    asketchPage.layers
+      .map(getNativeLayer.bind(null, failingLayers))
+      .forEach(layer => layer && page.addLayer(layer));
+
+    if (failingLayers.length === 1) {
+      UI.alert('asketch2sketch', 'One layer couldn\'t be imported and was skipped.');
+    } else if (failingLayers.length > 1) {
+      UI.alert('asketch2sketch', `${failingLayers.length} layers couldn't be imported and were skipped.`);
+    } else {
+      const emojis = ['👌', '👍', '✨', '😍', '🍾', '🤩', '🎉', '👏', '💪', '🤘', '💅', '🏆', '🚀'];
+
+      UI.message(`Import successful ${emojis[Math.floor(emojis.length * Math.random())]}`);
+    }
+
+    zoomToFit(context);
   }
 }

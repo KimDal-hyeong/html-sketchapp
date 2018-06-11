@@ -1,4 +1,8 @@
+// taken from https://github.com/airbnb/react-sketchapp/blob/master/src/utils/findFont.js
 import hashStyle from './hashStyle';
+
+// Font displayed if San Francisco fonts are not found
+const APPLE_BROKEN_SYSTEM_FONT = '.AppleSystemUIFont';
 
 // this borrows heavily from react-native's RCTFont class
 // thanks y'all
@@ -49,7 +53,12 @@ const weightOfFont = font => {
     for (let i = 0; i < weights.length; i += 1) {
       const w = weights[i];
 
-      if (font.fontName().toLowerCase().endsWith(w)) {
+      if (
+        font
+          .fontName()
+          .toLowerCase()
+          .endsWith(w)
+      ) {
         return FONT_WEIGHTS[w];
       }
     }
@@ -91,15 +100,15 @@ const findFont = style => {
   const defaultFontWeight = NSFontWeightRegular;
   const defaultFontSize = 14;
 
-  let fontSize = defaultFontSize;
-  let fontWeight = defaultFontWeight;
-  let familyName = defaultFontFamily;
+  const fontSize = style.fontSize ? style.fontSize : defaultFontSize;
+  let fontWeight = style.fontWeight ? FONT_WEIGHTS[style.fontWeight] : defaultFontWeight;
+  // Default to Helvetica if fonts are missing
+  let familyName =
+    // Must use two equals (==) for compatibility with Cocoascript
+    // eslint-disable-next-line eqeqeq
+    defaultFontFamily == APPLE_BROKEN_SYSTEM_FONT ? 'Helvetica' : defaultFontFamily;
   let isItalic = false;
   let isCondensed = false;
-
-  if (style.fontSize) {
-    fontSize = style.fontSize;
-  }
 
   if (style.fontFamily) {
     familyName = style.fontFamily;
@@ -107,10 +116,6 @@ const findFont = style => {
 
   if (style.fontStyle) {
     isItalic = FONT_STYLES[style.fontStyle] || false;
-  }
-
-  if (style.fontWeight) {
-    fontWeight = FONT_WEIGHTS[style.fontWeight] || NSFontWeightRegular;
   }
 
   let didFindFont = false;

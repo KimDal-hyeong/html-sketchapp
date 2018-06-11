@@ -1,10 +1,15 @@
-import ShapeGroup from './shapeGroup';
-import Rectange from './rectangle';
+import Rectange from './model/rectangle';
+import SVG from './model/svg';
+import ShapeGroup from './model/shapeGroup';
+import Style from './model/style';
+import Text from './model/text';
+import TextStyle from './model/textStyle';
 import createXPathFromElement from './helpers/createXPathFromElement';
-import Style from './style';
-import Text from './text';
-import TextStyle from './textStyle';
 import {parseBackgroundImage} from './helpers/background';
+import {getSVGString} from './helpers/svg';
+import {getGroupBCR} from './helpers/bcr';
+import {fixWhiteSpace} from './helpers/text';
+import {isNodeVisible, isTextVisible} from './helpers/visibility';
 
 const DEFAULT_VALUES = {
   backgroundColor: 'rgba(0, 0, 0, 0)',
@@ -21,10 +26,10 @@ function shadowStringToObject(shadowStr) {
   if (matches && matches.length === 7) {
     shadowObj = {
       color: matches[1],
-      offsetX: matches[2],
-      offsetY: matches[3],
-      blur: matches[4],
-      spread: matches[5]
+      offsetX: parseInt(matches[2], 10),
+      offsetY: parseInt(matches[3], 10),
+      blur: parseInt(matches[4], 10),
+      spread: parseInt(matches[5], 10)
     };
   }
 
@@ -40,44 +45,29 @@ function hasOnlyDefaultStyles(styles) {
   });
 }
 
-function calculateBCRFromRanges(ranges) {
-  let x = Infinity;
-  let y = Infinity;
-  let width = 0;
-  let height = 0;
-
-  ranges.forEach(range => {
-    x = Math.min(x, range.x);
-    y = Math.min(y, range.y);
-  });
-
-  ranges.forEach(range => {
-    const normalizedWidth = range.width + (range.x - x);
-    const normalizedHeight = range.height + (range.y - y);
-
-    width = Math.max(width, normalizedWidth);
-    height = Math.max(height, normalizedHeight);
-  });
-
-  return {x, y, width, height};
-}
-
-function fixBorderRadius(borderRadius) {
+function fixBorderRadius(borderRadius, width, height) {
   const matches = borderRadius.match(/^([0-9.]+)(.+)$/);
 
+  // Sketch uses 'px' units for border radius, so we need to convert % to px
   if (matches && matches[2] === '%') {
-    const value = parseInt(matches[1], 10);
+    const baseVal = Math.max(width, height);
+    const percentageApplied = baseVal * (parseInt(matches[1], 10) / 100);
 
-    // not sure about this, but border-radius: 50% should be fully rounded
-    return value >= 50 ? 100 : value;
+    return Math.round(percentageApplied);
   }
-
   return parseInt(borderRadius, 10);
 }
 
-export default async function nodeToSketchLayers(node) {
+function isSVGDescendant(node) {
+  return (node instanceof SVGElement) && node.matches('svg *');
+}
+
+export default function nodeToSketchLayers(node, options) {
   const layers = [];
-  const {width, height, x, y} = node.getBoundingClientRect();
+  const bcr = node.getBoundingClientRect();
+  const {left, top} = bcr;
+  const width = bcr.right - bcr.left;
+  const height = bcr.bottom - bcr.top;
 
   const styles = getComputedStyle(node);
   const {
@@ -104,27 +94,34 @@ export default async function nodeToSketchLayers(node) {
     letterSpacing,
     color,
     textTransform,
-    textDecorationStyle,
+    textDecorationLine,
     textAlign,
     justifyContent,
     display,
     boxShadow,
-    visibility,
     opacity,
-    overflowX,
-    overflowY
+    whiteSpace
   } = styles;
 
-  if ((width === 0 || height === 0) && overflowX === 'hidden' && overflowY === 'hidden') {
+  // skip SVG child nodes as they are already covered by `new SVG(…)`
+  if (isSVGDescendant(node)) {
     return layers;
   }
 
-  if (display === 'none' || visibility === 'hidden' || parseFloat(opacity) === 0) {
+  if (!isNodeVisible(node, bcr, styles)) {
     return layers;
   }
 
-  const leaf = new ShapeGroup({x, y, width, height});
-  const isImage = node.nodeName === 'IMG' && node.attributes.src;
+  const shapeGroup = new ShapeGroup({x: left, y: top, width, height});
+
+  if (options && options.getRectangleName) {
+    shapeGroup.setName(options.getRectangleName(node));
+  } else {
+    shapeGroup.setName(createXPathFromElement(node));
+  }
+
+  const isImage = node.nodeName === 'IMG' && node.currentSrc;
+  const isSVG = node.nodeName === 'svg';
 
   // if layer has no background/shadow/border/etc. skip it
   if (isImage || !hasOnlyDefaultStyles(styles)) {
@@ -135,10 +132,10 @@ export default async function nodeToSketchLayers(node) {
     }
 
     if (isImage) {
-      const absoluteUrl = new URL(node.attributes.src.value, location.href);
+      const absoluteUrl = new URL(node.currentSrc, location.href);
 
-      await style.addImageFill(absoluteUrl.href);
-      leaf.setFixedWidthAndHeight();
+      style.addImageFill(absoluteUrl.href);
+      shapeGroup.setFixedWidthAndHeight();
     }
 
     // This should return a array when multiple background-images are supported
@@ -147,7 +144,7 @@ export default async function nodeToSketchLayers(node) {
     if (backgroundImageResult) {
       switch (backgroundImageResult.type) {
         case 'Image':
-          await style.addImageFill(backgroundImageResult.value);
+          style.addImageFill(backgroundImageResult.value);
           break;
         case 'LinearGradient':
           style.addGradientFill(backgroundImageResult.value);
@@ -191,34 +188,59 @@ export default async function nodeToSketchLayers(node) {
       }
     }
 
-    leaf.setStyle(style);
+    if (!options || options.layerOpacity !== false) {
+      style.addOpacity(opacity);
+    }
+
+    shapeGroup.setStyle(style);
 
     //TODO borderRadius can be expressed in different formats and use various units - for simplicity we assume "X%"
     const cornerRadius = {
-      topLeft: fixBorderRadius(borderTopLeftRadius),
-      topRight: fixBorderRadius(borderTopRightRadius),
-      bottomLeft: fixBorderRadius(borderBottomLeftRadius),
-      bottomRight: fixBorderRadius(borderBottomRightRadius)
+      topLeft: fixBorderRadius(borderTopLeftRadius, width, height),
+      topRight: fixBorderRadius(borderTopRightRadius, width, height),
+      bottomLeft: fixBorderRadius(borderBottomLeftRadius, width, height),
+      bottomRight: fixBorderRadius(borderBottomRightRadius, width, height)
     };
 
     const rectangle = new Rectange({width, height, cornerRadius});
 
-    leaf.addLayer(rectangle);
-    leaf.setName(createXPathFromElement(node));
+    shapeGroup.addLayer(rectangle);
 
-    layers.push(leaf);
+    layers.push(shapeGroup);
+  }
+
+  if (isSVG) {
+    // sketch ignores padding and centerging as defined by viewBox and preserveAspectRatio when
+    // importing SVG, so instead of using BCR of the SVG, we are using BCR of its children
+    const childrenBCR = getGroupBCR(Array.from(node.children));
+    const svgLayer = new SVG({
+      x: childrenBCR.left,
+      y: childrenBCR.top,
+      width: childrenBCR.width,
+      height: childrenBCR.height,
+      rawSVGString: getSVGString(node)
+    });
+
+    layers.push(svgLayer);
+
+    return layers;
+  }
+
+  if (!isTextVisible(styles)) {
+    return layers;
   }
 
   const textStyle = new TextStyle({
     fontFamily,
     fontSize: parseInt(fontSize, 10),
-    lineHeight: parseInt(lineHeight, 10),
-    letterSpacing: parseFloat(letterSpacing),
+    lineHeight: lineHeight !== 'normal' ? parseInt(lineHeight, 10) : undefined,
+    letterSpacing: letterSpacing !== 'normal' ? parseFloat(letterSpacing) : undefined,
     fontWeight: parseInt(fontWeight, 10),
     color,
     textTransform,
-    textDecoration: textDecorationStyle,
-    textAlign: display === 'flex' || display === 'inline-flex' ? justifyContent : textAlign
+    textDecoration: textDecorationLine,
+    textAlign: display === 'flex' || display === 'inline-flex' ? justifyContent : textAlign,
+    skipSystemFonts: options && options.skipSystemFonts
   });
 
   const rangeHelper = document.createRange();
@@ -230,22 +252,25 @@ export default async function nodeToSketchLayers(node) {
       rangeHelper.selectNodeContents(textNode);
       const textRanges = Array.from(rangeHelper.getClientRects());
       const numberOfLines = textRanges.length;
-      const textBCR = calculateBCRFromRanges(textRanges);
+      const textBCR = rangeHelper.getBoundingClientRect();
       const lineHeightInt = parseInt(lineHeight, 10);
+      const textBCRHeight = textBCR.bottom - textBCR.top;
       let fixY = 0;
 
       // center text inside a box
       // TODO it's possible now in sketch - fix it!
-      if (lineHeightInt && textBCR.height !== lineHeightInt * numberOfLines) {
-        fixY = (textBCR.height - lineHeightInt * numberOfLines) / 2;
+      if (lineHeightInt && textBCRHeight !== lineHeightInt * numberOfLines) {
+        fixY = (textBCRHeight - lineHeightInt * numberOfLines) / 2;
       }
 
+      const textValue = fixWhiteSpace(textNode.nodeValue, whiteSpace);
+
       const text = new Text({
-        x: textBCR.x,
-        y: textBCR.y + fixY,
-        width: textBCR.width,
-        height: textBCR.height,
-        text: textNode.nodeValue.trim(),
+        x: textBCR.left,
+        y: textBCR.top + fixY,
+        width: textBCR.right - textBCR.left,
+        height: textBCRHeight,
+        text: textValue,
         style: textStyle,
         multiline: numberOfLines > 1
       });

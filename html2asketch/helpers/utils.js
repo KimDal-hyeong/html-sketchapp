@@ -1,17 +1,6 @@
 import normalizeColor from 'normalize-css-color';
 import {FillType} from 'sketch-constants';
 
-// https://stackoverflow.com/a/20285053
-const toDataURL = url => fetch(url, {mode: 'cors'})
-  .then(response => response.blob())
-  .then(blob => new Promise((resolve, reject) => {
-    const reader = new FileReader();
-
-    reader.onloadend = () => resolve(reader.result);
-    reader.onerror = reject;
-    reader.readAsDataURL(blob);
-  }));
-
 const lut = [];
 
 for (let i = 0; i < 256; i += 1) {
@@ -76,46 +65,71 @@ export const makeColorFill = (cssColor, alpha) => ({
   patternTileScale: 1
 });
 
-// patternFillType - 0 1 2 3
-export const makeImageFill = async(url, patternFillType = 1) => {
-  let dataURL = '';
+const ensureBase64DataURL = url => {
+  const imageData = url.match(/data:(.+?)(;(.+))?,(.+)/i);
 
-  if (url.indexOf('data:') === 0) {
-    dataURL = url;
-  } else {
-    try {
-      dataURL = await toDataURL(url);
-    } catch (e) {
-      console.error('Issue downloading ' + url + ' (' + e.message + ')');
-    }
-  }
+  if (imageData && imageData[3] !== 'base64') {
+    // Solve for an NSURL bug that can't handle plaintext data: URLs
+    const type = imageData[1];
+    const data = decodeURIComponent(imageData[4]);
+    const encodingMatch = imageData[3] && imageData[3].match(/^charset=(.*)/);
+    let buffer;
 
-  const result = {
-    _class: 'fill',
-    isEnabled: true,
-    fillType: FillType.Pattern,
-    image: {
-      _class: 'MSJSONOriginalDataReference',
-      _ref_class: 'MSImageData',
-      _ref: `images/${generateID()}`
-    },
-    noiseIndex: 0,
-    noiseIntensity: 0,
-    patternFillType,
-    patternTileScale: 1
-  };
-
-  if (dataURL) {
-    const imageData = dataURL.match(/data:.+;base64,(.+)/i);
-
-    if (imageData && imageData[1]) {
-      result.image.data = {_data: imageData[1]};
+    if (encodingMatch) {
+      buffer = Buffer.from(data, encodingMatch[1]);
     } else {
-      return null;
+      buffer = Buffer.from(data);
     }
-  } else {
-    result.image.url = url;
+
+    return `data:${type};base64,${buffer.toString('base64')}`;
   }
 
-  return result;
+  return url;
+};
+
+// patternFillType - 0 1 2 3
+export const makeImageFill = (url, patternFillType = 1) => ({
+  _class: 'fill',
+  isEnabled: true,
+  fillType: FillType.Pattern,
+  image: {
+    _class: 'MSJSONOriginalDataReference',
+    _ref_class: 'MSImageData',
+    _ref: `images/${generateID()}`,
+    url: url.indexOf('data:') === 0 ? ensureBase64DataURL(url) : url
+  },
+  noiseIndex: 0,
+  noiseIntensity: 0,
+  patternFillType,
+  patternTileScale: 1
+});
+
+const containsAllItems = (needles, haystack) => needles.every(needle => haystack.includes(needle));
+
+export const calculateResizingConstraintValue = (...args) => {
+  const noHeight =
+    [RESIZING_CONSTRAINTS.TOP, RESIZING_CONSTRAINTS.BOTTOM, RESIZING_CONSTRAINTS.HEIGHT];
+  const noWidth =
+    [RESIZING_CONSTRAINTS.LEFT, RESIZING_CONSTRAINTS.RIGHT, RESIZING_CONSTRAINTS.WIDTH];
+  const validValues = Object.values(RESIZING_CONSTRAINTS);
+
+  if (!args.every(arg => validValues.includes(arg))) {
+    throw new Error('Unknown resizing constraint');
+  } else if (containsAllItems(noHeight, args)) {
+    throw new Error('Can\'t fix height when top & bottom are fixed');
+  } else if (containsAllItems(noWidth, args)) {
+    throw new Error('Can\'t fix width when left & right are fixed');
+  }
+
+  return args.length > 0 ? args.reduce((acc, item) => acc & item, args[0]) : RESIZING_CONSTRAINTS.NONE;
+};
+
+export const RESIZING_CONSTRAINTS = {
+  TOP: 31,
+  RIGHT: 62,
+  BOTTOM: 55,
+  LEFT: 59,
+  WIDTH: 61,
+  HEIGHT: 47,
+  NONE: 63
 };

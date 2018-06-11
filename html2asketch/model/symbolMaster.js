@@ -1,12 +1,24 @@
-import {generateID} from './helpers/utils';
+import {generateID} from '../helpers/utils';
 import Base from './base';
+import SymbolInstance from './symbolInstance';
 
 class SymbolMaster extends Base {
-  constructor({x, y}) {
+  constructor({x, y, width = null, height = null}) {
     super();
     this._class = 'symbolMaster';
     this._x = x;
     this._y = y;
+    this._width = width;
+    this._height = height;
+    this._symbolID = generateID();
+  }
+
+  setId(id) {
+    this._symbolID = id;
+  }
+
+  getSymbolInstance({x, y, width, height}) {
+    return new SymbolInstance({x, y, width, height, symbolID: this._symbolID});
   }
 
   addLayer(layer) {
@@ -19,21 +31,23 @@ class SymbolMaster extends Base {
 
   toJSON() {
     const obj = super.toJSON();
-    let width = 0;
-    let height = 0;
+    let width = this._width;
+    let height = this._height;
 
-    // fit symbol size to its contents
-    this._layers.forEach(layer => {
-      const layerWidth = layer._x + layer._width;
-      const layerHeight = layer._y + layer._height;
+    // if width and height were not explicitly set, fit symbol size to its contents
+    if (this._width === null || this._height === null) {
+      this._layers.forEach(layer => {
+        const layerWidth = layer._x + layer._width;
+        const layerHeight = layer._y + layer._height;
 
-      if (width < layerWidth) {
-        width = layerWidth;
-      }
-      if (height < layerHeight) {
-        height = layerHeight;
-      }
-    });
+        if (width < layerWidth) {
+          width = layerWidth;
+        }
+        if (height < layerHeight) {
+          height = layerHeight;
+        }
+      });
+    }
 
     obj.frame = {
       '_class': 'rect',
@@ -77,7 +91,7 @@ class SymbolMaster extends Base {
     obj.includeBackgroundColorInExport = true;
     obj.resizesContent = false;
     obj.includeBackgroundColorInInstance = false;
-    obj.symbolID = generateID();
+    obj.symbolID = this._symbolID;
     obj.changeIdentifier = 0;
 
     return obj;

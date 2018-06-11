@@ -1,10 +1,12 @@
 import Base from './base';
 
-class Page extends Base {
+class Artboard extends Base {
 
-  constructor({width, height}) {
+  constructor({x, y, width, height}) {
     super();
-    this._class = 'page';
+    this._class = 'artboard';
+    this._x = x;
+    this._y = y;
     this._width = width;
     this._height = height;
   }
@@ -15,10 +17,10 @@ class Page extends Base {
     obj.frame = {
       '_class': 'rect',
       'constrainProportions': false,
-      'height': this._width,
-      'width': this._height,
-      'x': 0,
-      'y': 0
+      'height': this._height,
+      'width': this._width,
+      'x': this._x,
+      'y': this._y
     };
 
     obj.style = {
@@ -46,4 +48,4 @@ class Page extends Base {
   }
 }
 
-export default Page;
+export default Artboard;
